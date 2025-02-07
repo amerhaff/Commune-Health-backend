@@ -8,8 +8,12 @@ from .models import (
     NPProvider,
     Employee,
     Dependent,
-    Employer
+    Employer,
+    ProviderOperatingHours,
+    ProviderMembershipTier
 )
+from django.utils import timezone
+import uuid
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -23,27 +27,153 @@ class BrokerSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Broker
-        fields = ['id', 'user', 'brokerage_name', 'website',
-                 'national_producer_number', 'states_licensed', 'licensure_number']
+        fields = [
+            'id', 'user', 'brokerage_name', 'website',
+            'national_producer_number', 'states_licensed', 
+            'licensure_number'
+        ]
+
+class EmployeeSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+    is_contact_person = serializers.BooleanField(read_only=True)
+    
+    class Meta:
+        model = Employee
+        fields = [
+            'id', 'employer', 'user', 'first_name', 'last_name', 
+            'email', 'address_line1', 'address_line2',
+            'city', 'state', 'zip_code', 'sex',
+            'date_of_birth', 'enrollment_date',
+            'enrollment_status', 'dpc_membership_id',
+            'is_contact_person'
+        ]
 
 class EmployerSerializer(serializers.ModelSerializer):
-    admin = UserSerializer(read_only=True)
+    contact_person = UserSerializer(read_only=True)
+    employees = EmployeeSerializer(many=True, read_only=True)
+    contact_employee = serializers.SerializerMethodField()
     
     class Meta:
         model = Employer
-        fields = ['id', 'admin', 'company_name', 'company_type', 'industry',
-                 'company_size', 'website', 'employer_identification_number',
-                 'address_line1', 'address_line2', 'city', 'state', 'zip_code',
-                 'phone', 'email']
+        fields = [
+            'id', 'contact_person', 'company_name', 'company_type', 
+            'industry', 'company_size', 'website', 
+            'employer_identification_number', 'phone', 'email',
+            'address_line1', 'address_line2', 'city', 'state', 'zip_code',
+            'employees', 'contact_employee'
+        ]
+
+    def get_contact_employee(self, obj):
+        """Get the employee record for the contact person"""
+        try:
+            contact_employee = obj.employees.get(user=obj.contact_person)
+            return EmployeeSerializer(contact_employee).data
+        except Employee.DoesNotExist:
+            return None
+
+class EmployerCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating an employer with contact person"""
+    contact_person_email = serializers.EmailField(write_only=True)
+    contact_person_first_name = serializers.CharField(write_only=True)
+    contact_person_last_name = serializers.CharField(write_only=True)
+    
+    class Meta:
+        model = Employer
+        fields = [
+            'company_name', 'company_type', 'industry',
+            'company_size', 'website', 'employer_identification_number',
+            'phone', 'email', 'address_line1', 'address_line2',
+            'city', 'state', 'zip_code',
+            'contact_person_email', 'contact_person_first_name',
+            'contact_person_last_name'
+        ]
+
+    def create(self, validated_data):
+        # Extract contact person data
+        contact_email = validated_data.pop('contact_person_email')
+        contact_first_name = validated_data.pop('contact_person_first_name')
+        contact_last_name = validated_data.pop('contact_person_last_name')
+
+        # Create or get user for contact person
+        user, created = User.objects.get_or_create(
+            email=contact_email,
+            defaults={
+                'username': contact_email,
+                'first_name': contact_first_name,
+                'last_name': contact_last_name,
+                'user_type': User.UserType.EMPLOYER
+            }
+        )
+
+        # Create employer
+        employer = Employer.objects.create(
+            contact_person=user,
+            **validated_data
+        )
+
+        # Create employee record for contact person
+        Employee.objects.create(
+            employer=employer,
+            user=user,
+            first_name=contact_first_name,
+            last_name=contact_last_name,
+            email=contact_email,
+            # Set other required fields with defaults or from validated_data
+            enrollment_status='ACTIVE',
+            enrollment_date=timezone.now().date(),
+            dpc_membership_id=f"EMP-{uuid.uuid4().hex[:8].upper()}"
+        )
+
+        return employer
+
+class OperatingHoursSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProviderOperatingHours
+        fields = ['day', 'is_open', 'open_time', 'close_time']
+
+class MembershipTierSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProviderMembershipTier
+        fields = [
+            'id', 'name', 'price', 'description', 
+            'is_active', 'created_at', 'updated_at',
+            'annual_price', 'formatted_price'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
 
 class ProviderSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
+    is_accepting_patients = serializers.BooleanField(read_only=True)
+    operating_hours = OperatingHoursSerializer(many=True, read_only=True)
+    membership_tiers = MembershipTierSerializer(many=True, read_only=True)
     
     class Meta:
         model = Provider
-        fields = ['id', 'user', 'provider_type', 'practice_name', 'website',
-                 'years_experience', 'npi_number', 'dea_number',
-                 'states_licensed', 'license_number']
+        fields = [
+            'id', 'user', 'provider_type', 'practice_name', 'website',
+            'years_experience', 'npi_number', 'dea_number',
+            'states_licensed', 'license_number', 'accepting_patients',
+            'max_patient_capacity', 'current_patient_count', 
+            'is_accepting_patients', 'operating_hours', 'membership_tiers'
+        ]
+        read_only_fields = ['current_patient_count']
+        extra_kwargs = {
+            'max_patient_capacity': {'required': True}
+        }
+
+    def validate_max_patient_capacity(self, value):
+        """
+        Validate that max_patient_capacity is not less than current_patient_count
+        """
+        if self.instance and value < self.instance.current_patient_count:
+            raise serializers.ValidationError(
+                "Maximum capacity cannot be less than current patient count"
+            )
+        if value < 1:
+            raise serializers.ValidationError(
+                "Maximum capacity must be at least 1"
+            )
+        return value
 
 class MDDOProviderSerializer(serializers.ModelSerializer):
     provider = ProviderSerializer(read_only=True)
@@ -68,17 +198,6 @@ class NPProviderSerializer(serializers.ModelSerializer):
     class Meta:
         model = NPProvider
         fields = ['id', 'provider', 'np_school', 'np_school_graduation_year']
-
-class EmployeeSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Employee
-        fields = [
-            'id', 'employer', 'first_name', 'last_name', 
-            'email', 'address_line1', 'address_line2',
-            'city', 'state', 'zip_code', 'sex',
-            'date_of_birth', 'enrollment_date',
-            'enrollment_status', 'dpc_membership_id'
-        ]
 
 class DependentSerializer(serializers.ModelSerializer):
     class Meta:

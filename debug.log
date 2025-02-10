@@ -1,0 +1,2 @@
+INFO 2025-02-01 23:49:15,437 middleware [GET] /api/health/ - 401 (0.00s)
+INFO 2025-02-01 23:52:04,339 middleware [GET] /api/health/ - 200 (0.01s)

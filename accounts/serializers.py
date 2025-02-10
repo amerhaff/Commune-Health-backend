@@ -10,7 +10,10 @@ from .models import (
     Dependent,
     Employer,
     ProviderOperatingHours,
-    ProviderMembershipTier
+    ProviderMembershipTier,
+    EmployeeMembership,
+    DependentMembership,
+    Message
 )
 from django.utils import timezone
 import uuid
@@ -33,9 +36,32 @@ class BrokerSerializer(serializers.ModelSerializer):
             'licensure_number'
         ]
 
+class EmployeeMembershipSerializer(serializers.ModelSerializer):
+    membership_tier_name = serializers.CharField(source='membership_tier.name', read_only=True)
+    provider_name = serializers.CharField(source='provider.practice_name', read_only=True)
+    
+    class Meta:
+        model = EmployeeMembership
+        fields = [
+            'id', 'membership_id', 'membership_tier', 'membership_tier_name',
+            'provider', 'provider_name', 'start_date', 'end_date', 'is_active'
+        ]
+
+class DependentMembershipSerializer(serializers.ModelSerializer):
+    membership_tier_name = serializers.CharField(source='membership_tier.name', read_only=True)
+    provider_name = serializers.CharField(source='provider.practice_name', read_only=True)
+    
+    class Meta:
+        model = DependentMembership
+        fields = [
+            'id', 'membership_id', 'membership_tier', 'membership_tier_name',
+            'provider', 'provider_name', 'start_date', 'end_date', 'is_active'
+        ]
+
 class EmployeeSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
     is_contact_person = serializers.BooleanField(read_only=True)
+    memberships = EmployeeMembershipSerializer(many=True, read_only=True)
     
     class Meta:
         model = Employee
@@ -44,8 +70,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
             'email', 'address_line1', 'address_line2',
             'city', 'state', 'zip_code', 'sex',
             'date_of_birth', 'enrollment_date',
-            'enrollment_status', 'dpc_membership_id',
-            'is_contact_person'
+            'enrollment_status', 'is_contact_person',
+            'memberships'
         ]
 
 class EmployerSerializer(serializers.ModelSerializer):
@@ -112,16 +138,14 @@ class EmployerCreateSerializer(serializers.ModelSerializer):
         )
 
         # Create employee record for contact person
-        Employee.objects.create(
+        employee = Employee.objects.create(
             employer=employer,
             user=user,
             first_name=contact_first_name,
             last_name=contact_last_name,
             email=contact_email,
-            # Set other required fields with defaults or from validated_data
             enrollment_status='ACTIVE',
             enrollment_date=timezone.now().date(),
-            dpc_membership_id=f"EMP-{uuid.uuid4().hex[:8].upper()}"
         )
 
         return employer
@@ -200,11 +224,18 @@ class NPProviderSerializer(serializers.ModelSerializer):
         fields = ['id', 'provider', 'np_school', 'np_school_graduation_year']
 
 class DependentSerializer(serializers.ModelSerializer):
+    memberships = DependentMembershipSerializer(many=True, read_only=True)
+    
     class Meta:
         model = Dependent
         fields = [
             'id', 'employee', 'first_name', 'last_name',
             'date_of_birth', 'sex', 'relationship',
             'enrollment_date', 'enrollment_status',
-            'dpc_membership_id'
-        ] 
+            'memberships'
+        ]
+
+class MessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Message  # Create Message model if not exists
+        fields = ['id', 'sender', 'content', 'timestamp', 'seen'] 

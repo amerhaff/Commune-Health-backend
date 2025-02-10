@@ -186,7 +186,6 @@ class Employee(models.Model):
     date_of_birth = models.DateField()
     enrollment_date = models.DateField()
     enrollment_status = models.CharField(max_length=20)
-    dpc_membership_id = models.CharField(max_length=50, unique=True)
 
     def __str__(self):
         return f"{self.first_name} {self.last_name}"
@@ -198,6 +197,30 @@ class Employee(models.Model):
     def is_contact_person(self):
         """Check if this employee is the employer's contact person"""
         return self.user and self.user == self.employer.contact_person
+
+class EmployeeMembership(models.Model):
+    employee = models.ForeignKey(
+        Employee,
+        on_delete=models.CASCADE,
+        related_name='memberships'
+    )
+    membership_tier = models.ForeignKey(
+        ProviderMembershipTier,
+        on_delete=models.PROTECT,
+        related_name='employee_memberships'
+    )
+    provider = models.ForeignKey(
+        Provider,
+        on_delete=models.PROTECT,
+        related_name='employee_memberships'
+    )
+    membership_id = models.CharField(max_length=50, unique=True)
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.employee} - {self.membership_tier.name} ({self.membership_id})"
 
 class Dependent(models.Model):
     class Relationship(models.TextChoices):
@@ -220,13 +243,36 @@ class Dependent(models.Model):
     )
     enrollment_date = models.DateField()
     enrollment_status = models.CharField(max_length=20)
-    dpc_membership_id = models.CharField(max_length=50, unique=True)
 
     def __str__(self):
         return f"{self.first_name} {self.last_name} - {self.get_relationship_display()} of {self.employee.first_name} {self.employee.last_name}"
 
     class Meta:
         ordering = ['last_name', 'first_name']
+
+class DependentMembership(models.Model):
+    dependent = models.ForeignKey(
+        Dependent,
+        on_delete=models.CASCADE,
+        related_name='memberships'
+    )
+    membership_tier = models.ForeignKey(
+        ProviderMembershipTier,
+        on_delete=models.PROTECT,
+        related_name='dependent_memberships'
+    )
+    provider = models.ForeignKey(
+        Provider,
+        on_delete=models.PROTECT,
+        related_name='dependent_memberships'
+    )
+    membership_id = models.CharField(max_length=50, unique=True)
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.dependent} - {self.membership_tier.name} ({self.membership_id})"
 
 class ProviderOperatingHours(models.Model):
     class DayOfWeek(models.TextChoices):
